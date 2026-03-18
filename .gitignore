@@ -10,8 +10,8 @@ data/raw/
 # Augmented data is committed (4MB, safe to share)
 # data/augmented/
 
-# Features and saved models (large binary files)
-features/
+# Feature cache (large .npy binary files) — Python source in src/features/ is tracked
+feature_cache/
 models/finbert_finetuned/
 models/deberta_finetuned/
 models/meta_model.pkl
