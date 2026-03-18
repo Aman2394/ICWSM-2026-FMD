@@ -55,47 +55,42 @@ def get_softmax_preds(trainer: Trainer, dataset: Dataset) -> np.ndarray:
 def run_oof_finetuning(
     texts: list[str],
     labels: list[int],
-    project_dir: str,
-    model_id: str = FINBERT_MODEL_ID,
-    training_args_overrides: dict | None = None,
-    use_gradient_checkpointing: bool = False,
+    config: dict,
 ) -> np.ndarray:
     """
     5-fold OOF fine-tuning. Returns OOF softmax predictions shape (N, 2).
 
     IMPORTANT: These OOF preds prevent leakage when used as meta-classifier features.
+
+    config keys:
+        model_name       : HuggingFace model ID (required)
+        output_dir       : directory to save fold checkpoints (required)
+        n_splits         : number of CV folds (default 5)
+        random_state     : random seed (default 42)
+        + any TrainingArguments kwargs (num_train_epochs, learning_rate, fp16, etc.)
     """
+    config = dict(config)  # copy so we don't mutate caller's dict
+    model_id   = config.pop("model_name")
+    output_dir = config.pop("output_dir")
+    n_splits   = config.pop("n_splits", N_FOLDS)
+    random_state = config.pop("random_state", 42)
+
     tokenizer = AutoTokenizer.from_pretrained(model_id)
-    skf = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=42)
+    skf = StratifiedKFold(n_splits=n_splits, shuffle=True, random_state=random_state)
     oof_preds = np.zeros((len(texts), 2), dtype=np.float32)
 
-    # Default training args (T4-compatible)
-    is_large = "large" in model_id
-    default_args = dict(
-        num_train_epochs=10 if not is_large else 5,
-        per_device_train_batch_size=4 if is_large else 16,
-        gradient_accumulation_steps=4 if is_large else 1,
-        learning_rate=1e-5 if is_large else 2e-5,
-        lr_scheduler_type="cosine",
-        fp16=True,
-        load_best_model_at_end=True,
-        metric_for_best_model="accuracy",
-        evaluation_strategy="epoch",
-        save_strategy="epoch",
-        report_to="none",
+    # Remaining config keys are passed directly to TrainingArguments
+    training_args_kwargs = dict(
         save_total_limit=1,
+        **config,
     )
-    if use_gradient_checkpointing or is_large:
-        default_args["gradient_checkpointing"] = True
-    if training_args_overrides:
-        default_args.update(training_args_overrides)
 
     for fold, (train_idx, val_idx) in enumerate(skf.split(texts, labels)):
-        print(f"\n── Fold {fold + 1}/{N_FOLDS} ──")
-        train_texts = [texts[i] for i in train_idx]
+        print(f"\n── Fold {fold + 1}/{n_splits} ──")
+        train_texts  = [texts[i] for i in train_idx]
         train_labels = [labels[i] for i in train_idx]
-        val_texts   = [texts[i] for i in val_idx]
-        val_labels  = [labels[i] for i in val_idx]
+        val_texts    = [texts[i] for i in val_idx]
+        val_labels   = [labels[i] for i in val_idx]
 
         train_ds = tokenize_dataset(train_texts, train_labels, tokenizer)
         val_ds   = tokenize_dataset(val_texts,   val_labels,   tokenizer)
@@ -104,9 +99,8 @@ def run_oof_finetuning(
             model_id, num_labels=2, ignore_mismatched_sizes=True,
         )
 
-        output_dir = os.path.join(project_dir, "models",
-                                   f"{model_id.split('/')[-1]}_fold{fold}")
-        args = TrainingArguments(output_dir=output_dir, **default_args)
+        fold_output_dir = os.path.join(output_dir, f"fold{fold}")
+        args = TrainingArguments(output_dir=fold_output_dir, **training_args_kwargs)
 
         trainer = Trainer(
             model=model,
