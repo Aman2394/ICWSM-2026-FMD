@@ -55,18 +55,35 @@ def extract_coherence_features(text: str, model: SentenceTransformer) -> dict:
 
 
 def extract_coherence_feature_matrix(texts: list[str],
-                                      device: str = "cuda") -> np.ndarray:
+                                      device: str = "cuda",
+                                      batch_size: int = 64,
+                                      checkpoint_path: str | None = None) -> np.ndarray:
     """
     Returns ndarray of shape (N, len(FEATURE_NAMES)).
+
+    If checkpoint_path is given, saves progress every 100 samples and resumes
+    from the checkpoint if it already exists — safe for Colab disconnects.
     """
     import nltk
     nltk.download("punkt", quiet=True)
     nltk.download("punkt_tab", quiet=True)
 
-    model = load_sent_model(device=device)
+    start_idx = 0
     rows = []
+    if checkpoint_path is not None:
+        import os
+        if os.path.exists(checkpoint_path):
+            rows = np.load(checkpoint_path, allow_pickle=True).tolist()
+            start_idx = len(rows)
+            print(f"Resuming coherence from checkpoint: {start_idx}/{len(texts)} done")
+
+    model = load_sent_model(device=device)
     from tqdm import tqdm
-    for text in tqdm(texts, desc="Coherence features"):
+    for i, text in enumerate(tqdm(texts[start_idx:], desc="Coherence features",
+                                  initial=start_idx, total=len(texts))):
         feat = extract_coherence_features(text, model)
         rows.append([feat[k] for k in FEATURE_NAMES])
+
+        if checkpoint_path is not None and (i + 1) % 100 == 0:
+            np.save(checkpoint_path, np.array(rows, dtype=np.float32))
     return np.array(rows, dtype=np.float32)
