@@ -72,21 +72,39 @@ def extract_nli_features(text: str, model: CrossEncoder) -> dict:
 
 
 def extract_nli_feature_matrix(texts: list[str], device: str = "cuda",
-                                batch_size: int = 32) -> np.ndarray:
+                                batch_size: int = 32,
+                                checkpoint_path: str | None = None) -> np.ndarray:
     """
     Extract NLI features for a list of texts.
 
     Returns ndarray of shape (N, len(FEATURE_NAMES)).
+
+    If checkpoint_path is given, saves progress every 100 samples and resumes
+    from the checkpoint if it already exists — safe for Colab disconnects.
     """
     import nltk
     nltk.download("punkt", quiet=True)
     nltk.download("punkt_tab", quiet=True)
 
-    model = load_nli_model(device=device)
+    # Resume from checkpoint if available
+    start_idx = 0
     rows = []
+    if checkpoint_path is not None:
+        import os
+        if os.path.exists(checkpoint_path):
+            rows = np.load(checkpoint_path, allow_pickle=True).tolist()
+            start_idx = len(rows)
+            print(f"Resuming NLI from checkpoint: {start_idx}/{len(texts)} done")
+
+    model = load_nli_model(device=device)
     from tqdm import tqdm
-    for text in tqdm(texts, desc="NLI features"):
+    for i, text in enumerate(tqdm(texts[start_idx:], desc="NLI features",
+                                  initial=start_idx, total=len(texts))):
         feat = extract_nli_features(text, model)
         rows.append([feat[k] for k in FEATURE_NAMES])
+
+        # Save checkpoint every 100 samples
+        if checkpoint_path is not None and (i + 1) % 100 == 0:
+            np.save(checkpoint_path, np.array(rows, dtype=np.float32))
 
     return np.array(rows, dtype=np.float32)
