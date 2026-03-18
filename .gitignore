@@ -5,9 +5,10 @@ __pycache__/
 *.egg-info/
 .eggs/
 
-# Data — raw and augmented data stays local / on Drive, not in repo
+# Data — raw data stays local (may contain sensitive content)
 data/raw/
-data/augmented/
+# Augmented data is committed (4MB, safe to share)
+# data/augmented/
 
 # Features and saved models (large binary files)
 features/
