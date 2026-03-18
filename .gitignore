@@ -1,0 +1,36 @@
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+
+# Data — raw and augmented data stays local / on Drive, not in repo
+data/raw/
+data/augmented/
+
+# Features and saved models (large binary files)
+features/
+models/finbert_finetuned/
+models/deberta_finetuned/
+models/meta_model.pkl
+
+# Results
+results/predictions/
+results/ablation_results.csv
+
+# Notebooks — strip outputs before committing
+notebooks/.ipynb_checkpoints/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# IDE
+.vscode/
+.idea/
+*.DS_Store
+
+# Secrets — never commit API keys
+.env
+*.env
+secrets.py
