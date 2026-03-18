@@ -1,16 +1,65 @@
 # CLAUDE.md — Financial Misinformation Detection (FMD)
 ## ICWSM 2026 Shared Task
 
-> **Framing:** This is NOT "detect GPT-4.1 editing artifacts."  
+> **Framing:** This is NOT "detect GPT-4.1 editing artifacts."
 > It is: *"Does this paragraph exhibit properties of well-formed, internally consistent financial journalism?"*
+
+---
+
+## Project Status
+
+### ✅ Done
+- [x] Full project scaffold (`src/`, `notebooks/`, `feature_cache/`, `models/`, `results/`)
+- [x] `requirements.txt` + `.venv` created and verified
+- [x] GitHub repo: https://github.com/Aman2394/ICWSM-2026-FMD (private)
+- [x] **Data loader** (`src/utils/data_loader.py`) — parses RFC-BENCH schema (`Open-ended Verifiable Question` / `Ground-True Answer`), strips prompt prefix, unique IDs (`sft_0`, `rl_0`, ...)
+- [x] **Data splitter** (`src/utils/data_splitter.py`) — stratified 70/15/15 train/val/test split on original 2,000 samples; `get_split_records()` filters augmented samples to train split only
+- [x] **Augmentation pipeline** (`src/augmentation/`) — 9 perturbation types, Azure OpenAI / OpenAI / Anthropic support, resume/checkpoint, fast-fail on missing API key
+- [x] **Data augmentation running** (`01_data_augmentation.ipynb`) — ~35% complete (~350/1000 sources done, ~1,157 augmented samples so far); est. ~81 mins remaining
+- [x] **Tier 1 feature extractors** (`src/features/tier1_*.py`) — NLI (5 features), FinBERT embeddings + PCA/distances (2 features), coherence (4 features), epistemic (4 features)
+- [x] **`EmbeddingDistanceExtractor`** — fitted on True-class training embeddings; `save()` / `load()` for inference-time reuse (never refit on blind data)
+- [x] **Tier 2 OOF fine-tuning** (`src/features/tier2_encoder.py`) — 5-fold stratified CV for FinBERT + DeBERTa; `inference_softmax_preds()` for blind-set inference
+- [x] **Tier 3 MLM perplexity** (`src/features/tier3_perplexity.py`) — token-by-token FinBERT MLM (4 features)
+- [x] **Fine-tuners** (`src/models/finetune_finbert.py`, `finetune_deberta.py`) — class-weighted loss for 1:4 imbalance, OOM fallback to `deberta-v3-base`
+- [x] **Meta-classifier** (`src/models/meta_classifier.py`) — LightGBM (`is_unbalance=True`), ablation across all tier combos, LR sanity check (`class_weight='balanced'`)
+- [x] **Inference pipeline** (`src/predict.py`) — full blind-set inference; auto-computes metrics (Accuracy, Precision, Recall, F1, F1-macro, ROC-AUC, confusion matrix) when ground-truth labels are present; saves `_metrics.json` alongside predictions CSV
+- [x] **Notebooks 01–07** — Colab-ready, Drive mounting, GPU checks, checkpointing after each step
+- [x] **Notebook 07** (`07_predict_blind.ipynb`) — blind-set inference with optional metrics
+
+### 🔄 In Progress
+- [ ] **Data augmentation** — ~65% remaining (~81 mins); output → `data/augmented/augmented_train.json`
+
+### ⏳ Pending (in order)
+- [ ] **Train/val/test split** — run `data_splitter.make_splits()` after augmentation completes
+- [ ] **Notebook 02** — Tier 1 feature extraction on train split (T4 GPU, ~2–3 hrs); saves `feature_cache/tier1_features.npy` + `models/emb_extractor.pkl`
+- [ ] **Notebook 03** — Tier 2 OOF fine-tuning FinBERT + DeBERTa (T4 GPU, ~3–4 hrs); saves `feature_cache/tier2_oof_preds.npy`
+- [ ] **Notebook 04** — Tier 3 MLM perplexity (T4 GPU, ~2 hrs); saves `feature_cache/tier3_features.npy`
+- [ ] **Notebook 05** — Meta-classifier training + ablation (CPU, ~5 mins); saves `models/meta_model.pkl`
+- [ ] **Notebook 06** — Detailed ablation analysis + paper-ready numbers (CPU, ~10 mins)
+- [ ] **Notebook 07** — Blind-set inference + metrics on held-out test split
+- [ ] **Paper writing** (deadline: ICWSM 2026 Workshop, May 26 2026)
+
+---
+
+## Important Implementation Decisions
+
+| Decision | Detail |
+|---|---|
+| **Class imbalance** | Dataset is 1:4 True:False after augmentation. Handled via `is_unbalance=True` (LightGBM), `class_weight='balanced'` (LR), `CrossEntropyLoss(weight=...)` (fine-tuners). Do NOT downsample. |
+| **No leakage** | Train/val/test split on original 2,000 samples first. Augmented samples only go into train. Tier 2 OOF predictions prevent leakage into meta-classifier. |
+| **EmbeddingDistanceExtractor** | Fitted on True-class train embeddings. Saved to `models/emb_extractor.pkl`. Must be loaded (not refit) at inference time. |
+| **feature_cache/ vs src/features/** | `feature_cache/` = `.npy` data files. `src/features/` = Python source. Never confuse. |
+| **Augmented data schema** | `augmented_train.json` contains 2,000 originals + ~3,000 LLM-generated False samples. `perturbation_type=None` marks originals. `source_id` links augmented to original. |
+| **Blind set inference** | `predict.py` auto-detects labels. Metrics computed if present (test split eval), skipped if absent (official blind set). |
+| **Azure OpenAI** | Use `AzureOpenAI` client with deployment name as model. Env vars: `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_DEPLOYMENT`, `AZURE_OPENAI_API_VERSION`. |
 
 ---
 
 ## Project Overview
 
-**Task:** Binary classification of standalone financial news paragraphs → `True` (original) or `False` (misinformation).  
-**Dataset:** RFC-BENCH — 1,000 SFT + 1,000 RL samples, balanced 50/50.  
-**Eval Metrics:** Accuracy, Precision, Recall, F1.  
+**Task:** Binary classification of standalone financial news paragraphs → `True` (original) or `False` (misinformation).
+**Dataset:** RFC-BENCH — 1,000 SFT + 1,000 RL samples, balanced 50/50.
+**Eval Metrics:** Accuracy, Precision, Recall, F1.
 **Constraint:** Single T4 GPU (Google Colab compatible).
 
 ---
@@ -27,14 +76,14 @@ Input Paragraph
       │         └── Epistemic Calibration (rule-based)
       │
       ├──► Tier 2: Learned Encoder Representations  (generalizes to most misinformation)
-      │         ├── Fine-tuned FinBERT classifier logits
-      │         └── Fine-tuned DeBERTa-v3-large classifier logits
+      │         ├── Fine-tuned FinBERT classifier logits (OOF)
+      │         └── Fine-tuned DeBERTa-v3-large classifier logits (OOF)
       │
       └──► Tier 3: Dataset-Specific Auxiliary Features  (this benchmark only)
                 ├── MLM Perplexity (FinBERT masked LM)
                 └── Perturbation-type features (rule-based)
 
-All tiers (96-dim vector) → LightGBM Meta-Classifier (nested 5-fold CV)
+All tiers (~15 features) → LightGBM Meta-Classifier (nested 5-fold CV)
 ```
 
 ---
@@ -42,409 +91,129 @@ All tiers (96-dim vector) → LightGBM Meta-Classifier (nested 5-fold CV)
 ## Repository Structure
 
 ```
-fmd/
+ICWSM-2026-FMD/
 ├── CLAUDE.md                        # This file
+├── requirements.txt
 ├── data/
 │   ├── raw/
-│   │   ├── train_sft.json
-│   │   └── train_rl.json
-│   └── augmented/
-│       └── augmented_train.json     # Output of augmentation pipeline
-├── features/
+│   │   ├── misinfo_SFT_train_for_cot.json   # 1,000 samples (500 True + 500 False)
+│   │   └── misinfo_RL_train_for_cot.json    # 1,000 samples (500 True + 500 False)
+│   ├── augmented/
+│   │   └── augmented_train.json     # 2,000 originals + ~3,000 LLM-augmented False
+│   └── splits.json                  # Train/val/test IDs (created after augmentation)
+├── feature_cache/                   # .npy feature arrays (NOT src/features/)
 │   ├── tier1_features.npy
 │   ├── tier2_oof_preds.npy
-│   └── tier3_features.npy
+│   ├── tier3_features.npy
+│   ├── labels.npy
+│   ├── blind_tier1.npy              # Blind-set features (notebook 07)
+│   ├── blind_tier2.npy
+│   └── blind_tier3.npy
 ├── models/
-│   ├── finbert_finetuned/           # Saved fine-tuned FinBERT
-│   ├── deberta_finetuned/           # Saved fine-tuned DeBERTa
-│   └── meta_model.pkl               # LightGBM meta-classifier
+│   ├── emb_extractor.pkl            # Fitted PCA + centroid — load at inference time
+│   ├── finbert_finetuned/
+│   ├── deberta_finetuned/
+│   └── meta_model.pkl
 ├── notebooks/
-│   ├── 01_data_augmentation.ipynb   # Colab: CPU, API calls only
-│   ├── 02_tier1_features.ipynb      # Colab: GPU required (NLI inference)
-│   ├── 03_tier2_finetuning.ipynb    # Colab: GPU required
-│   ├── 04_tier3_features.ipynb      # Colab: GPU required (MLM perplexity)
-│   ├── 05_meta_classifier.ipynb     # Colab: CPU, LightGBM only
-│   ├── 06_ablation.ipynb            # Colab: CPU (uses saved features)
-│   └── check_regeneration.ipynb     # Quality check for augmented data
+│   ├── 01_data_augmentation.ipynb   # CPU — Azure/OpenAI API calls
+│   ├── 02_tier1_features.ipynb      # GPU — NLI + embeddings + coherence + epistemic
+│   ├── 03_tier2_finetuning.ipynb    # GPU — OOF fine-tuning FinBERT + DeBERTa
+│   ├── 04_tier3_features.ipynb      # GPU — MLM perplexity
+│   ├── 05_meta_classifier.ipynb     # CPU — LightGBM + ablation
+│   ├── 06_ablation.ipynb            # CPU — detailed ablation + paper numbers
+│   ├── 07_predict_blind.ipynb       # GPU — blind-set inference + metrics
+│   └── check_regeneration.ipynb     # CPU — augmentation quality check
 ├── src/
+│   ├── predict.py                   # Full inference pipeline (CLI + importable)
 │   ├── augmentation/
-│   │   ├── call_llm.py
-│   │   └── perturbation_prompts.py
-│   ├── features/
+│   │   ├── call_llm.py              # LLM API augmentation (Azure/OpenAI/Anthropic)
+│   │   └── perturbation_prompts.py  # 9 perturbation type prompts
+│   ├── features/                    # Python source only (NOT .npy data)
 │   │   ├── tier1_nli.py
-│   │   ├── tier1_embeddings.py
+│   │   ├── tier1_embeddings.py      # Includes EmbeddingDistanceExtractor (save/load)
 │   │   ├── tier1_coherence.py
 │   │   ├── tier1_epistemic.py
-│   │   ├── tier2_encoder.py
+│   │   ├── tier2_encoder.py         # OOF training + inference_softmax_preds()
 │   │   └── tier3_perplexity.py
 │   ├── models/
 │   │   ├── finetune_finbert.py
 │   │   ├── finetune_deberta.py
 │   │   └── meta_classifier.py
 │   └── utils/
-│       ├── colab_setup.py           # Drive mounting, GPU checks, installs
-│       └── feature_store.py         # Save/load .npy feature arrays
-├── results/
-│   ├── ablation_results.csv
-│   └── predictions/
-└── requirements.txt
+│       ├── colab_setup.py
+│       ├── data_loader.py           # RFC-BENCH schema parser + unique IDs
+│       ├── data_splitter.py         # 70/15/15 stratified split + augment filtering
+│       └── feature_store.py         # save/load .npy to feature_cache/
+└── results/
+    ├── ablation_results.csv
+    └── predictions/
+        ├── blind_predictions.csv
+        └── blind_predictions_metrics.json
 ```
+
+---
+
+## Data Schema (RFC-BENCH)
+
+```json
+{
+  "index": 0,
+  "Open-ended Verifiable Question": "You are a financial misinformation detector.\nPlease check whether the following information is true or false and output the answer [true/false].\n\n\n<PARAGRAPH TEXT>",
+  "Ground-True Answer": "The provided information is true.",
+  "Instruction": "No"
+}
+```
+
+- `extract_paragraph()` in `data_loader.py` strips the prompt prefix to get bare paragraph text
+- Unique IDs: `sft_0` … `sft_999`, `rl_0` … `rl_999`
+- Labels: `"true"` → 1, `"false"` → 0
 
 ---
 
 ## Environment Setup
 
-### Google Colab — Standard Header (all GPU notebooks)
-
-```python
-# ── Cell 1: Colab Setup ──────────────────────────────────────────────────────
-import subprocess, sys, os
-
-# Mount Drive for persistent storage of models & features
-from google.colab import drive
-drive.mount('/content/drive')
-
-PROJECT_DIR = "/content/drive/MyDrive/fmd"
-os.makedirs(PROJECT_DIR, exist_ok=True)
-os.chdir(PROJECT_DIR)
-
-# Verify GPU
-import torch
-assert torch.cuda.is_available(), "⚠️  No GPU detected. Runtime → Change runtime type → T4 GPU"
-print(f"✅ GPU: {torch.cuda.get_device_name(0)}")
-print(f"   VRAM: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f} GB")
-
-# Install dependencies
-subprocess.run([sys.executable, "-m", "pip", "install", "-q",
-    "transformers>=4.40", "sentence-transformers", "lightgbm",
-    "datasets", "accelerate", "bitsandbytes", "scikit-learn",
-    "pandas", "numpy", "tqdm"
-])
-```
-
-### Local (non-Colab)
-
+### Local
 ```bash
-conda create -n fmd python=3.11
-conda activate fmd
+python3 -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
+# Jupyter kernel registered as "Python (fmd)"
 ```
 
-### `requirements.txt`
+### Google Colab
+```python
+# Clone repo and mount Drive
+!git clone https://<token>@github.com/Aman2394/ICWSM-2026-FMD.git /content/drive/MyDrive/fmd
 
+# Upload raw data files manually to:
+# /content/drive/MyDrive/fmd/data/raw/misinfo_SFT_train_for_cot.json
+# /content/drive/MyDrive/fmd/data/raw/misinfo_RL_train_for_cot.json
 ```
-transformers>=4.40.0
-sentence-transformers>=2.7.0
-lightgbm>=4.3.0
-datasets>=2.19.0
-accelerate>=0.30.0
-scikit-learn>=1.4.0
-pandas>=2.2.0
-numpy>=1.26.0
-torch>=2.2.0
-tqdm
-scipy
+
+### Azure OpenAI Setup (for augmentation)
+```python
+os.environ['LLM_PROVIDER']             = 'azure'
+os.environ['AZURE_OPENAI_API_KEY']     = '<32-char hex key>'
+os.environ['AZURE_OPENAI_ENDPOINT']    = 'https://<resource>.openai.azure.com/'
+os.environ['AZURE_OPENAI_DEPLOYMENT']  = '<deployment-name>'
+os.environ['AZURE_OPENAI_API_VERSION'] = '<YOUR_API_VERSION>'
 ```
 
 ---
 
 ## GPU Components — Colab Notes
 
-All GPU-bound steps are isolated to specific notebooks. Use **T4 GPU runtime** for these.
-
-| Notebook | GPU? | Est. Time (T4) | Key Models |
+| Notebook | GPU? | Est. Time (T4) | Status |
 |---|---|---|---|
-| `01_data_augmentation` | ❌ CPU | ~2–4 hrs (API) | LLM API calls only |
-| `02_tier1_features` | ✅ GPU | ~2–3 hrs | `cross-encoder/nli-deberta-v3-large` |
-| `03_tier2_finetuning` | ✅ GPU | ~3–4 hrs | FinBERT + DeBERTa-v3-large |
-| `04_tier3_features` | ✅ GPU | ~2 hrs | FinBERT MLM head |
-| `05_meta_classifier` | ❌ CPU | ~5 mins | LightGBM |
-| `06_ablation` | ❌ CPU | ~10 mins | Uses saved `.npy` files |
+| `01_data_augmentation` | ❌ CPU | ~2–4 hrs (API) | 🔄 ~35% done |
+| `02_tier1_features` | ✅ GPU | ~2–3 hrs | ⏳ Pending |
+| `03_tier2_finetuning` | ✅ GPU | ~3–4 hrs | ⏳ Pending |
+| `04_tier3_features` | ✅ GPU | ~2 hrs | ⏳ Pending |
+| `05_meta_classifier` | ❌ CPU | ~5 mins | ⏳ Pending |
+| `06_ablation` | ❌ CPU | ~10 mins | ⏳ Pending |
+| `07_predict_blind` | ✅ GPU | ~2–3 hrs | ⏳ Pending |
 
-### Colab Session Management
-
-> ⚠️ **Colab disconnects lose in-memory state.** Always save checkpoints to Drive after each major step.
-
-```python
-# Save features immediately after extraction
-import numpy as np
-np.save(f"{PROJECT_DIR}/features/tier1_features.npy", tier1_features)
-np.save(f"{PROJECT_DIR}/features/tier1_labels.npy", labels)
-print("✅ Features saved to Drive")
-```
-
----
-
-## Tier 1 Features — Implementation Guide
-
-### 1.1 NLI Internal Consistency (`tier1_nli.py`)
-
-```python
-# GPU required — ~2–3 hrs for full dataset on T4
-from sentence_transformers import CrossEncoder
-
-model = CrossEncoder("cross-encoder/nli-deberta-v3-large", device="cuda")
-
-def extract_nli_features(text: str) -> dict:
-    sentences = sent_tokenize(text)
-    pairs = [(sentences[i], sentences[j])
-             for i in range(len(sentences))
-             for j in range(i+1, len(sentences))]
-    if not pairs:
-        return {k: 0.0 for k in ["contradiction_ratio", "max_contradiction_score",
-                                   "entailment_ratio", "coherence_score", "weighted_contradiction"]}
-    scores = model.predict(pairs, apply_softmax=True)
-    # scores shape: (n_pairs, 3) → [contradiction, entailment, neutral]
-    contra = scores[:, 0]
-    entail = scores[:, 1]
-    return {
-        "contradiction_ratio":      (contra > 0.5).mean(),
-        "max_contradiction_score":  contra.max(),
-        "entailment_ratio":         (entail > 0.5).mean(),
-        "coherence_score":          entail.sum() / (entail.sum() + contra.sum() + 1e-8),
-        "weighted_contradiction":   contra.sum(),
-    }
-```
-
-### 1.2 FinBERT Embeddings + Distances (`tier1_embeddings.py`)
-
-```python
-# GPU required — fast (~10 mins on T4)
-from transformers import AutoTokenizer, AutoModel
-from sklearn.decomposition import PCA
-from scipy.spatial.distance import mahalanobis
-import torch, numpy as np
-
-tokenizer = AutoTokenizer.from_pretrained("ProsusAI/finbert")
-model = AutoModel.from_pretrained("ProsusAI/finbert").cuda().eval()
-
-def get_cls_embedding(text: str) -> np.ndarray:
-    inputs = tokenizer(text, return_tensors="pt", truncation=True,
-                       max_length=512, padding=True).to("cuda")
-    with torch.no_grad():
-        out = model(**inputs)
-    return out.last_hidden_state[:, 0, :].cpu().numpy().squeeze()
-
-# After extracting all embeddings:
-# 1. Fit PCA(n_components=64) on training set True-class embeddings
-# 2. Compute centroid of True embeddings
-# 3. For each sample: cosine distance + Mahalanobis distance from True centroid
-```
-
-### 1.3 Discourse Coherence (`tier1_coherence.py`)
-
-```python
-# GPU required — fast (~5 mins on T4)
-from sentence_transformers import SentenceTransformer
-from sklearn.metrics.pairwise import cosine_similarity
-
-sent_model = SentenceTransformer("sentence-transformers/all-mpnet-base-v2", device="cuda")
-
-def extract_coherence_features(text: str) -> dict:
-    sentences = sent_tokenize(text)
-    if len(sentences) < 2:
-        return {"consecutive_similarity_min": 1.0, "consecutive_similarity_std": 0.0,
-                "first_last_similarity": 1.0, "mean_coherence": 1.0}
-    embs = sent_model.encode(sentences, convert_to_numpy=True)
-    consec_sims = [cosine_similarity([embs[i]], [embs[i+1]])[0][0]
-                   for i in range(len(embs)-1)]
-    return {
-        "consecutive_similarity_min": min(consec_sims),
-        "consecutive_similarity_std": np.std(consec_sims),
-        "first_last_similarity":      cosine_similarity([embs[0]], [embs[-1]])[0][0],
-        "mean_coherence":             np.mean(consec_sims),
-    }
-```
-
-### 1.4 Epistemic Calibration (`tier1_epistemic.py`)
-
-```python
-# CPU only
-HIGH_CERTAINTY = {"will", "certain", "guaranteed", "definitely", "absolutely",
-                  "clearly", "undoubtedly", "must", "always", "never"}
-HEDGES = {"may", "might", "could", "would", "perhaps", "possibly", "suggest",
-          "indicate", "appear", "seem", "likely", "unlikely", "some", "often"}
-
-def extract_epistemic_features(text: str) -> dict:
-    words = text.lower().split()
-    n = len(words) + 1e-8
-    high_cert = sum(w in HIGH_CERTAINTY for w in words)
-    hedge = sum(w in HEDGES for w in words)
-    epistemic = high_cert + hedge
-    return {
-        "certainty_ratio":              high_cert / (epistemic + 1e-8),
-        "hedge_density":                hedge / n,
-        "certainty_evidence_mismatch":  int(high_cert > 2 and hedge < 1),
-    }
-```
-
----
-
-## Tier 2 Fine-Tuning — Colab Configs
-
-### FinBERT (`finetune_finbert.py`)
-
-```python
-# T4 GPU — ~30 min/run
-from transformers import (AutoTokenizer, AutoModelForSequenceClassification,
-                           TrainingArguments, Trainer)
-
-MODEL_NAME = "ProsusAI/finbert"
-# Full fine-tune: 110M params fits comfortably on T4
-
-training_args = TrainingArguments(
-    output_dir=f"{PROJECT_DIR}/models/finbert_finetuned",
-    num_train_epochs=10,
-    per_device_train_batch_size=16,
-    learning_rate=2e-5,
-    lr_scheduler_type="cosine",
-    fp16=True,                        # Required for T4
-    load_best_model_at_end=True,
-    metric_for_best_model="accuracy",
-    evaluation_strategy="epoch",
-    save_strategy="epoch",
-    report_to="none",
-)
-```
-
-### DeBERTa-v3-large (`finetune_deberta.py`)
-
-```python
-# T4 GPU — ~2–3 hrs/run
-# 304M params — needs memory optimizations
-
-training_args = TrainingArguments(
-    output_dir=f"{PROJECT_DIR}/models/deberta_finetuned",
-    num_train_epochs=5,
-    per_device_train_batch_size=4,
-    gradient_accumulation_steps=4,   # Effective batch = 16
-    learning_rate=1e-5,
-    fp16=True,                        # Required for T4
-    gradient_checkpointing=True,      # Required for T4 with 304M params
-    load_best_model_at_end=True,
-    metric_for_best_model="accuracy",
-    evaluation_strategy="epoch",
-    save_strategy="epoch",
-    report_to="none",
-)
-
-# OOM fallback: if DeBERTa-v3-large OOMs, switch to:
-# MODEL_NAME = "microsoft/deberta-v3-base"  # 86M params
-```
-
-### Out-of-Fold Predictions (prevent leakage)
-
-```python
-from sklearn.model_selection import StratifiedKFold
-
-# CRITICAL: Tier 2 features fed to meta-classifier must be OOF predictions
-# to prevent data leakage. Never use in-fold predictions.
-skf = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-oof_preds = np.zeros((len(train_df), 2))  # softmax probs [P(False), P(True)]
-
-for fold, (train_idx, val_idx) in enumerate(skf.split(X, y)):
-    # train on train_idx, predict on val_idx
-    # store predictions in oof_preds[val_idx]
-    ...
-
-np.save(f"{PROJECT_DIR}/features/tier2_oof_preds.npy", oof_preds)
-```
-
----
-
-## Tier 3 Features — MLM Perplexity
-
-```python
-# GPU required — slow (~2 hrs on T4, token-by-token)
-from transformers import AutoTokenizer, AutoModelForMaskedLM
-import torch, numpy as np
-
-tokenizer = AutoTokenizer.from_pretrained("ProsusAI/finbert")
-mlm_model = AutoModelForMaskedLM.from_pretrained("ProsusAI/finbert").cuda().eval()
-
-def mlm_perplexity_features(text: str) -> dict:
-    inputs = tokenizer(text, return_tensors="pt", truncation=True,
-                       max_length=512).to("cuda")
-    input_ids = inputs["input_ids"].squeeze()
-    token_perplexities = []
-
-    for i in range(1, len(input_ids) - 1):  # Skip [CLS] and [SEP]
-        masked_ids = input_ids.clone()
-        masked_ids[i] = tokenizer.mask_token_id
-        with torch.no_grad():
-            logits = mlm_model(masked_ids.unsqueeze(0)).logits
-        probs = torch.softmax(logits[0, i], dim=-1)
-        token_prob = probs[input_ids[i]].item()
-        token_perplexities.append(-np.log(token_prob + 1e-10))
-
-    pp = np.array(token_perplexities)
-    return {
-        "mean_perplexity":          pp.mean(),
-        "max_perplexity":           pp.max(),
-        "std_perplexity":           pp.std(),
-        "top_10pct_perplexity_ratio": pp[pp > np.percentile(pp, 90)].mean() / (pp.mean() + 1e-8),
-    }
-```
-
----
-
-## Meta-Classifier
-
-```python
-# CPU only — fast (~5 mins)
-import lightgbm as lgb
-from sklearn.model_selection import StratifiedKFold
-from sklearn.linear_model import LogisticRegression
-import numpy as np
-
-# Load all feature arrays
-t1 = np.load(f"{PROJECT_DIR}/features/tier1_features.npy")
-t2 = np.load(f"{PROJECT_DIR}/features/tier2_oof_preds.npy")
-t3 = np.load(f"{PROJECT_DIR}/features/tier3_features.npy")
-X  = np.hstack([t1, t2, t3])   # ~96 dimensions
-y  = np.load(f"{PROJECT_DIR}/features/labels.npy")
-
-lgb_params = {
-    "n_estimators": 200,
-    "max_depth": 4,
-    "learning_rate": 0.05,
-    "subsample": 0.8,
-    "reg_alpha": 0.1,
-    "reg_lambda": 0.1,
-    "random_state": 42,
-}
-
-# Nested CV: outer=eval, inner=hyperparam tuning
-outer_cv = StratifiedKFold(n_splits=5, shuffle=True, random_state=42)
-
-# Sanity check: also run LogisticRegression on same features
-# If LGB >> LR, non-linear interactions are genuine
-lr = LogisticRegression(max_iter=1000, C=1.0)
-```
-
----
-
-## Data Augmentation
-
-```python
-# CPU — uses LLM API (no GPU needed)
-# Run in 01_data_augmentation.ipynb
-
-PERTURBATION_PROMPTS = {
-    "misleading_framing":     "Rewrite using alarming/negative word choice, but change NO facts.",
-    "cherry_picked_context":  "Add one true-sounding sentence from a different time period/sector that misleads.",
-    "false_attribution":      "Change who said or caused something. Keep the original claim unchanged.",
-    "correlation_as_causation": "Rewrite to imply causation where the original only implies coincidence.",
-    "omission_bias":          "Remove one qualifying sentence (e.g., 'however...') that changes the overall meaning.",
-    "scale_distortion":       "Change magnitude words: 'some'→'most', 'one analyst'→'analysts'.",
-    "hedge_manipulation":     "Flip certainty: 'will increase'→'might increase' or vice versa.",
-    "detail_hallucination":   "Add one specific but fabricated detail: a fake quote, invented metric, or made-up comparison.",
-    "composite":              "Apply two subtle changes simultaneously (e.g., a numerical tweak + a slight sentiment shift).",
-}
-
-# Target: 500 True × 3–4 perturbations = ~2,000 False examples
-# Final balanced dataset: ~2,000 True + 2,000 False
-```
+> ⚠️ **Colab disconnects lose in-memory state.** Each notebook saves checkpoints to Drive after every major step. Safe to re-run — all steps are idempotent.
 
 ---
 
@@ -453,10 +222,12 @@ PERTURBATION_PROMPTS = {
 | Days | Task | Compute | Output |
 |---|---|---|---|
 | 1–2 | Data augmentation (`01_`) | CPU / API | `augmented_train.json` |
-| 3 | Tier 1 feature extraction (`02_`) | T4 GPU ~2–3 hrs | `tier1_features.npy` |
-| 4–5 | Tier 2 fine-tuning (`03_`) | T4 GPU ~3–4 hrs | `tier2_oof_preds.npy` |
-| 6 | Tier 3 MLM perplexity (`04_`) | T4 GPU ~2 hrs | `tier3_features.npy` |
-| 7 | Meta-classifier + ablation (`05_`, `06_`) | CPU | `meta_model.pkl`, `ablation_results.csv` |
+| 2 | Train/val/test split | CPU | `data/splits.json` |
+| 3 | Tier 1 feature extraction (`02_`) | T4 GPU ~2–3 hrs | `feature_cache/tier1_features.npy` + `models/emb_extractor.pkl` |
+| 4–5 | Tier 2 fine-tuning (`03_`) | T4 GPU ~3–4 hrs | `feature_cache/tier2_oof_preds.npy` |
+| 6 | Tier 3 MLM perplexity (`04_`) | T4 GPU ~2 hrs | `feature_cache/tier3_features.npy` |
+| 7 | Meta-classifier + ablation (`05_`, `06_`) | CPU | `models/meta_model.pkl`, `results/ablation_results.csv` |
+| 7 | Blind-set inference + eval (`07_`) | T4 GPU | `results/predictions/blind_predictions.csv` |
 | 8–14 | Paper writing | — | `paper.pdf` |
 
 ---
@@ -483,7 +254,9 @@ PERTURBATION_PROMPTS = {
 | Blind set uses unknown perturbation types | Tier 1+2 carry weight; meta-classifier auto-downweights Tier 3 |
 | Different LLM used for generation | NLI consistency + discourse coherence are generation-agnostic |
 | Overfitting on 1,000 samples | Nested CV + augmentation + early stopping + Tier 1 inductive bias |
-| DeBERTa OOM on T4 | `gradient_checkpointing=True` + `fp16=True` + `batch_size=2`; fallback to `deberta-v3-base` |
+| DeBERTa OOM on T4 | `gradient_checkpointing=True` + `fp16=True` + `batch_size=4`; fallback to `deberta-v3-base` |
+| Class imbalance (1:4 after augmentation) | `is_unbalance=True` (LGB), `CrossEntropyLoss(weight=...)` (fine-tuners) |
+| Augmented samples leaking into val/test | Split on original 2,000 first; `get_split_records()` filters augmented to train only |
 | LLM submission required by organizers | Keep `Qwen2.5-7B QLoRA` fallback; use Tier 1 features as prompt context |
 | NLI noisy on financial text | Average multiple NLI models; optionally fine-tune on financial pairs |
 
@@ -503,10 +276,10 @@ PERTURBATION_PROMPTS = {
 
 ## Paper Details
 
-**Venue:** ICWSM 2026 Workshop · **Format:** AAAI 4 pages + appendix  
+**Venue:** ICWSM 2026 Workshop · **Format:** AAAI 4 pages + appendix
 **Workshop Date:** May 26, 2026
 
-**Title Template:**  
+**Title Template:**
 *[TeamName] at the Financial Misinformation Detection Challenge Task: Generalizable Coherence-Based Detection via Multi-Tier Feature Ensembles*
 
 **Core novelty claims:**

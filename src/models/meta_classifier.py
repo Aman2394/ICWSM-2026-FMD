@@ -27,6 +27,8 @@ LGB_PARAMS = {
     "random_state":   42,
     "n_jobs":         -1,
     "verbose":        -1,
+    # Handles 1:4 True:False imbalance from augmentation without discarding data
+    "is_unbalance":   True,
 }
 
 N_FOLDS = 5
@@ -71,8 +73,8 @@ def run_ablation(t1: np.ndarray, t2: np.ndarray, t3: np.ndarray,
 
     results = [evaluate(name, X, y) for name, X in configs.items()]
 
-    # LogisticRegression sanity check on full features
-    lr = LogisticRegression(max_iter=1000, C=1.0, random_state=42)
+    # LogisticRegression sanity check on full features (class_weight handles imbalance)
+    lr = LogisticRegression(max_iter=1000, C=1.0, random_state=42, class_weight="balanced")
     X_full = np.hstack([t1, t2, t3])
     skf = StratifiedKFold(n_splits=N_FOLDS, shuffle=True, random_state=42)
     lr_accs = cross_val_score(lr, X_full, y, cv=skf, scoring="accuracy")
@@ -111,7 +113,7 @@ def load_model(project_dir: str):
 
 
 def main(project_dir: str) -> None:
-    features_dir = os.path.join(project_dir, "features")
+    features_dir = os.path.join(project_dir, "feature_cache")
 
     t1 = np.load(os.path.join(features_dir, "tier1_features.npy"))
     t2 = np.load(os.path.join(features_dir, "tier2_oof_preds.npy"))

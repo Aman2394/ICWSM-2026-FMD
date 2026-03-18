@@ -54,8 +54,10 @@ def load_raw_file(path: str, split_tag: str | None = None) -> list[dict]:
 
     records = []
     for item in raw:
+        # Prefix split tag to avoid ID collision between SFT (0-999) and RL (0-999)
+        uid = f"{split_tag}_{item['index']}" if split_tag else str(item["index"])
         records.append({
-            "id":                item["index"],
+            "id":                uid,
             "text":              extract_paragraph(item["Open-ended Verifiable Question"]),
             "label":             parse_label(item["Ground-True Answer"]),
             "split":             split_tag or "unknown",

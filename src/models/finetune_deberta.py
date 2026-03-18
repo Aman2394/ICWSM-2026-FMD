@@ -100,7 +100,24 @@ def train(project_dir: str, val_split: float = 0.15, use_base: bool = False) -> 
         report_to="none",
     )
 
-    trainer = Trainer(
+    # Compute class weights to handle 1:4 True:False imbalance from augmentation
+    import torch
+    from torch import tensor
+    n_false = sum(1 for l in tr_labels if l == 0)
+    n_true  = sum(1 for l in tr_labels if l == 1)
+    total   = n_false + n_true
+    class_weights = tensor([total / (2 * n_false), total / (2 * n_true)]).to("cuda" if torch.cuda.is_available() else "cpu")
+
+    class WeightedTrainer(Trainer):
+        def compute_loss(self, model, inputs, return_outputs=False, **kwargs):
+            import torch.nn as nn
+            labels = inputs.pop("labels")
+            outputs = model(**inputs)
+            logits  = outputs.logits
+            loss = nn.CrossEntropyLoss(weight=class_weights)(logits, labels)
+            return (loss, outputs) if return_outputs else loss
+
+    trainer = WeightedTrainer(
         model=model,
         args=args,
         train_dataset=train_ds,

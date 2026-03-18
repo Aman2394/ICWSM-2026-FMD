@@ -8,7 +8,7 @@ import numpy as np
 
 def save_features(array: np.ndarray, name: str, project_dir: str) -> str:
     """Save a numpy array to features/ and print confirmation."""
-    features_dir = os.path.join(project_dir, "features")
+    features_dir = os.path.join(project_dir, "feature_cache")
     os.makedirs(features_dir, exist_ok=True)
     path = os.path.join(features_dir, f"{name}.npy")
     np.save(path, array)
@@ -18,7 +18,7 @@ def save_features(array: np.ndarray, name: str, project_dir: str) -> str:
 
 def load_features(name: str, project_dir: str) -> np.ndarray:
     """Load a numpy array from features/."""
-    path = os.path.join(project_dir, "features", f"{name}.npy")
+    path = os.path.join(project_dir, "feature_cache", f"{name}.npy")
     arr = np.load(path)
     print(f"📂 Loaded {name}.npy — shape {arr.shape}")
     return arr
